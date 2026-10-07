@@ -70,7 +70,7 @@
    API_BASE = your Cloudflare Worker URL (Ad_Source_Report_Worker.js), no trailing slash.
    A market shows "not connected" until API_BASE is replaced. To add a market: fill its sheet links in the Worker,
    then change its entry here to API_BASE + "/orlando/leads" etc. (slugs: orlando, lasvegas, atlanta). */
-const API_BASE = "https://revenue-by-ad-source.apfelipe94.workers.dev/";
+const API_BASE = "PASTE_WORKER_URL";
 const MARKETS = [
   { name: "Dallas",    leads: API_BASE + "/dallas/leads", spend: API_BASE + "/dallas/spend" },
   { name: "Orlando",   leads: "PASTE_ORLANDO_LEADS_URL",  spend: "PASTE_ORLANDO_SPEND_URL" },
@@ -109,7 +109,7 @@ const money = (n) => "$" + Number(n).toLocaleString("en-US", { maximumFractionDi
 const pct = (n) => (n * 100).toFixed(1) + "%";
 const connected = (u) => u && !u.startsWith("PASTE");
 
-let LEADS = [], SPEND = [], spendOn = false, sortKey = "revenue", sortDir = -1, ROWS = [];
+let RNG = {}, LEADS = [], SPEND = [], spendOn = false, sortKey = "revenue", sortDir = -1, ROWS = [];
 
 ["All markets"].concat(MARKETS.map((m) => m.name)).forEach((n) => { const o = document.createElement("option"); o.textContent = n; $("market").appendChild(o); });
 $("market").value = "Dallas";
@@ -150,6 +150,7 @@ async function load() {
 function render() {
   const { s, e } = range();
   if (!s || !e) return alert("Pick both dates.");
+  RNG = { s, e };
   $("dl").textContent = $("market").value + " · " + s + " → " + e;
   const m = {};
   const get = (k) => (m[k] = m[k] || { source: k, leads: 0, won: 0, revenue: 0, cost: 0 });
@@ -180,14 +181,16 @@ function draw() {
     : '<tr><td colspan="8" class="msg">No data in that range.</td></tr>';
   const T = ROWS.reduce((a, r) => ({ leads: a.leads + r.leads, won: a.won + r.won, revenue: a.revenue + r.revenue, cost: a.cost + r.cost }), { leads: 0, won: 0, revenue: 0, cost: 0 });
   // ROAS total only over sources that have spend, so free sources (phone, organic) don't inflate it
-  const paid = ROWS.filter((r) => r.cost > 0), pRev = paid.reduce((a, r) => a + r.revenue, 0);
+  const paid = ROWS.filter((r) => r.cost > 0), pRev = paid.reduce((a, r) => a + r.revenue, 0), pLeads = paid.reduce((a, r) => a + r.leads, 0);
   const roas = T.cost > 0 ? pRev / T.cost : null;
-  $("tfoot").innerHTML = `<tr><td>Total</td><td>${T.leads}</td><td>${T.won}</td><td>${T.leads ? pct(T.won / T.leads) : dash}</td><td>${T.cost > 0 ? money(T.cost) : dash}</td><td>${T.cost > 0 && T.leads ? "$" + (T.cost / T.leads).toFixed(2) : dash}</td><td>${money(T.revenue)}</td><td>${roas == null ? dash : roas.toFixed(2) + "x"}</td></tr>`;
+  $("tfoot").innerHTML = `<tr><td>Total</td><td>${T.leads}</td><td>${T.won}</td><td>${T.leads ? pct(T.won / T.leads) : dash}</td><td>${T.cost > 0 ? money(T.cost) : dash}</td><td>${T.cost > 0 && pLeads ? "$" + (T.cost / pLeads).toFixed(2) : dash}</td><td>${money(T.revenue)}</td><td>${roas == null ? dash : roas.toFixed(2) + "x"}</td></tr>`;
   $("cLeads").textContent = T.leads.toLocaleString(); $("cRev").textContent = money(T.revenue);
   $("cCost").textContent = spendOn ? money(T.cost) : "–"; $("cRoas").textContent = roas == null ? "–" : roas.toFixed(2) + "x";
   $("note").innerHTML = "Leads, Won and Revenue are for leads that came in during the selected dates (revenue = value of won deals in GHL). " +
     "Cost is ad spend in the same dates. Cost per lead = cost ÷ leads. ROAS = revenue ÷ cost (4.0x = $4 back per $1 spent). " +
-    "Total ROAS counts only sources with spend. Sources with no ad spend (organic, phone, referrals) show a dash." +
+    "Total Cost / Lead and ROAS count only sources with spend. Sources with no ad spend (organic, phone, referrals) show a dash." +
+    (spendOn && SPEND.length && RNG.s < SPEND.reduce((m, x) => (x.date < m ? x.date : m), SPEND[0].date)
+      ? "<br><b style='color:#b45309;font-style:normal'>Heads up: ad spend data only starts " + SPEND.reduce((m, x) => (x.date < m ? x.date : m), SPEND[0].date) + ". Leads before that date have no cost, so Cost / Lead and ROAS are not reliable for this range. Pick a range inside the spend data (for example Year to date).</b>" : "") +
     (spendOn ? "" : "<br><b>Ad cost isn't connected for this market yet</b>, so Cost, Cost / Lead and ROAS are blank.");
 }
 
