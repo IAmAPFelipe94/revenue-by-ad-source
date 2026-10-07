@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revenue by Ad Source</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Arial, Helvetica, sans-serif; background:#fff; color:#1f2430; }
+  #report { max-width:1100px; margin:0 auto; padding:14px; }
+  .hdr { text-align:center; margin-bottom:12px; }
+  .hdr h1 { font-size:18px; margin:0 0 2px; }
+  .hdr p { font-size:11px; color:#666; font-style:italic; margin:0; }
+  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; padding:10px; background:#fff7ed; border:1px solid #fed7aa; border-radius:6px; }
+  .controls label { font-size:13px; font-weight:600; color:#374151; }
+  .controls select, .controls input[type=date] { padding:5px 8px; border:1px solid #d1d5db; border-radius:4px; font-size:13px; background:#fff; }
+  .rng { display:none; align-items:center; gap:6px; font-size:13px; color:#6b7280; }
+  .btn { padding:6px 16px; background:#ea6c00; color:#fff; border:0; border-radius:4px; font-size:13px; font-weight:600; cursor:pointer; }
+  .btn:hover { background:#c45c00; }
+  .cards { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .card { flex:1 1 140px; border:1px solid #e5e7eb; border-radius:6px; padding:10px 14px; background:#fff; }
+  .card .n { font-size:20px; font-weight:700; } .card .l { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; }
+  .tw { overflow-x:auto; border:1px solid #d1d5db; }
+  table { width:100%; border-collapse:collapse; }
+  th { background:#ea6c00; color:#fff; font-size:13px; padding:7px 10px; border:1px solid #c45c00; cursor:pointer; white-space:nowrap; user-select:none; }
+  th:first-child, td:first-child { text-align:left; }
+  td { padding:6px 10px; border:1px solid #e5e7eb; font-size:13px; text-align:center; white-space:nowrap; }
+  tbody tr:nth-child(even) td { background:#fff7ed; }
+  tfoot td { font-weight:700; background:#f3f4f6 !important; }
+  td.src { max-width:360px; overflow:hidden; text-overflow:ellipsis; }
+  .good { color:#15803d; font-weight:700; } .bad { color:#b91c1c; font-weight:700; }
+  .note { font-size:11px; color:#6b7280; font-style:italic; margin-top:8px; line-height:1.5; }
+  .msg { padding:20px; text-align:center; color:#9ca3af; } .msg.err { color:#ef4444; }
+</style>
+</head>
+<body>
+<div id="report">
+  <div class="hdr"><h1>Revenue by Ad Source</h1><p id="dl">Loading…</p></div>
+
+  <div class="controls">
+    <label for="market">Market</label><select id="market"></select>
+    <label for="preset">Date range</label>
+    <select id="preset">
+      <option value="last7">Last 7 days</option><option value="last30" selected>Last 30 days</option>
+      <option value="last60">Last 60 days</option><option value="last90">Last 90 days</option>
+      <option value="mtd">Month to date</option><option value="ytd">Year to date</option>
+      <option value="alltime">All time</option><option value="custom">Custom range</option>
+    </select>
+    <span class="rng" id="rng">From <input type="date" id="sd"> To <input type="date" id="ed"></span>
+    <button class="btn" id="apply">Apply</button>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="n" id="cLeads">–</div><div class="l">Leads</div></div>
+    <div class="card"><div class="n" id="cCost">–</div><div class="l">Ad cost</div></div>
+    <div class="card"><div class="n" id="cRev">–</div><div class="l">Revenue</div></div>
+    <div class="card"><div class="n" id="cRoas">–</div><div class="l">ROAS</div></div>
+  </div>
+
+  <div class="tw"><table>
+    <thead><tr id="thead"></tr></thead>
+    <tbody id="tbody"><tr><td colspan="8" class="msg">Loading…</td></tr></tbody>
+    <tfoot id="tfoot"></tfoot>
+  </table></div>
+  <p class="note" id="note"></p>
+</div>
+
+<script>
+/* ===== CONFIG =====
+   API_BASE = your Cloudflare Worker URL (Ad_Source_Report_Worker.js), no trailing slash.
+   A market shows "not connected" until API_BASE is replaced. To add a market: fill its sheet links in the Worker,
+   then change its entry here to API_BASE + "/orlando/leads" etc. (slugs: orlando, lasvegas, atlanta). */
+const API_BASE = "https://revenue-by-ad-source.apfelipe94.workers.dev/";
+const MARKETS = [
+  { name: "Dallas",    leads: API_BASE + "/dallas/leads", spend: API_BASE + "/dallas/spend" },
+  { name: "Orlando",   leads: "PASTE_ORLANDO_LEADS_URL",  spend: "PASTE_ORLANDO_SPEND_URL" },
+  { name: "Las Vegas", leads: "PASTE_LASVEGAS_LEADS_URL", spend: "PASTE_LASVEGAS_SPEND_URL" },
+  { name: "Atlanta",   leads: "PASTE_ATLANTA_LEADS_URL",  spend: "PASTE_ATLANTA_SPEND_URL" }
+];
+const getJson = (u) => fetch(u).then((r) => r.json().then((j) => { if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status); return j; }));
+
+/* ===== SOURCE NAME CLEANUP ===== first matching rule wins (tested on lowercase, trimmed name) */
+const RULES = [
+  [/^google ads - call extension$/, "Google Ads"],           /* one Google Ads spend number, so call-extension leads roll in */
+  [/^(google ppc ad|google ads|google cpc|ggl_ads|ggl_cpc|google ?[|\/] ?cpc|google_ads)$/, "Google Ads"],
+  [/^(google organic|ggl_organic|google ?[|\/] ?organic)$/, "Google Organic"],
+  [/^(google my business|google business profile|gbp.*)$/, "Google My Business"],
+  [/^google$/, "Google (unclassified)"],
+  [/^(meta \/ facebook|facebook|facebook ads|fb paid|ig paid|instagram|meta)$/, "Meta / Facebook"],
+  [/^facebook organic$/, "Facebook Organic"],
+  [/^(bing ad|bing ads|bing cpc|bing)$/, "Bing Ads"],
+  [/^(direct|direct traffic)$/, "Direct Traffic"],
+  [/^quote form$/, "Quote Form"]
+];
+const seen = {};
+function norm(raw) {
+  const t = String(raw == null ? "" : raw).trim();
+  if (!t) return "Unattributed";
+  const k = t.toLowerCase();
+  for (const [re, name] of RULES) if (re.test(k)) return name;
+  if (!seen[k]) seen[k] = t;       // unknown names: group case-insensitively, show first spelling seen
+  return seen[k];
+}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const fmt = (d) => d.toISOString().slice(0, 10);
+const money = (n) => "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+const pct = (n) => (n * 100).toFixed(1) + "%";
+const connected = (u) => u && !u.startsWith("PASTE");
+
+let LEADS = [], SPEND = [], spendOn = false, sortKey = "revenue", sortDir = -1, ROWS = [];
+
+["All markets"].concat(MARKETS.map((m) => m.name)).forEach((n) => { const o = document.createElement("option"); o.textContent = n; $("market").appendChild(o); });
+$("market").value = "Dallas";
+
+function range() {
+  const p = $("preset").value, end = new Date(), start = new Date();
+  if (p === "custom") return { s: $("sd").value, e: $("ed").value };
+  if (p === "last7") start.setDate(end.getDate() - 7); if (p === "last30") start.setDate(end.getDate() - 30);
+  if (p === "last60") start.setDate(end.getDate() - 60); if (p === "last90") start.setDate(end.getDate() - 90);
+  if (p === "mtd") start.setDate(1); if (p === "ytd") { start.setMonth(0); start.setDate(1); }
+  if (p === "alltime") { start.setFullYear(2020); start.setMonth(0); start.setDate(1); }
+  return { s: fmt(start), e: fmt(end) };
+}
+$("preset").onchange = () => {
+  const c = $("preset").value === "custom"; $("rng").style.display = c ? "inline-flex" : "none";
+  if (c) { $("sd").value = fmt(new Date(Date.now() - 30 * 864e5)); $("ed").value = fmt(new Date()); }
+};
+
+async function load() {
+  const sel = $("market").value;
+  const list = sel === "All markets" ? MARKETS : MARKETS.filter((m) => m.name === sel);
+  const usable = list.filter((m) => connected(m.leads));
+  $("tbody").innerHTML = '<tr><td colspan="8" class="msg">Loading…</td></tr>';
+  if (!usable.length) { $("tbody").innerHTML = '<tr><td colspan="8" class="msg err">This market isn\'t connected yet.</td></tr>'; return; }
+  LEADS = []; SPEND = []; spendOn = false;
+  try {
+    const lead = await Promise.all(usable.map((m) => getJson(m.leads).then((j) => j.data || [])));
+    lead.forEach((a) => { for (const x of a) LEADS.push(x); });
+  } catch (e) { $("tbody").innerHTML = '<tr><td colspan="8" class="msg err">Couldn\'t load the lead data (' + e.message + ').</td></tr>'; return; }
+  const sp = usable.filter((m) => connected(m.spend));
+  if (sp.length) {
+    const res = await Promise.all(sp.map((m) => getJson(m.spend).then((j) => j.data || []).catch(() => null)));
+    res.forEach((a) => { if (a) { for (const x of a) SPEND.push(x); spendOn = true; } });
+  }
+  render();
+}
+
+function render() {
+  const { s, e } = range();
+  if (!s || !e) return alert("Pick both dates.");
+  $("dl").textContent = $("market").value + " · " + s + " → " + e;
+  const m = {};
+  const get = (k) => (m[k] = m[k] || { source: k, leads: 0, won: 0, revenue: 0, cost: 0 });
+  LEADS.filter((r) => r.date >= s && r.date <= e).forEach((r) => {
+    const o = get(norm(r.source)); o.leads++; o.won += r.won || 0; o.revenue += r.wonValue || 0;
+  });
+  SPEND.filter((r) => r.date >= s && r.date <= e).forEach((r) => { get(norm(r.source)).cost += Number(r.spend) || 0; });
+  ROWS = Object.values(m).map((o) => ({ ...o, close: o.leads ? o.won / o.leads : null, cpl: o.cost > 0 && o.leads ? o.cost / o.leads : null, roas: o.cost > 0 ? o.revenue / o.cost : null }));
+  draw();
+}
+
+const COLS = [["source", "Ad Source"], ["leads", "Leads"], ["won", "Won"], ["close", "Close Rate"], ["cost", "Cost"], ["cpl", "Cost / Lead"], ["revenue", "Revenue"], ["roas", "ROAS"]];
+function draw() {
+  $("thead").innerHTML = COLS.map(([k, l]) => `<th data-k="${k}">${l}${k === sortKey ? (sortDir < 0 ? " ▼" : " ▲") : ""}</th>`).join("");
+  document.querySelectorAll("#thead th").forEach((th) => th.onclick = () => { const k = th.dataset.k; sortDir = sortKey === k ? -sortDir : (k === "source" ? 1 : -1); sortKey = k; draw(); });
+  const rows = ROWS.filter((r) => r.leads || r.cost).slice().sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (sortKey === "source") return sortDir * String(x).localeCompare(String(y));
+    return sortDir * ((x == null ? -1 : x) - (y == null ? -1 : y)) || b.revenue - a.revenue;
+  });
+  const dash = "—";
+  $("tbody").innerHTML = rows.length ? rows.map((r) => `<tr>
+    <td class="src" title="${esc(r.source)}">${esc(r.source)}</td>
+    <td>${r.leads || dash}</td><td>${r.won || dash}</td><td>${r.close == null ? dash : pct(r.close)}</td>
+    <td>${r.cost > 0 ? money(r.cost) : dash}</td><td>${r.cpl == null ? dash : "$" + r.cpl.toFixed(2)}</td>
+    <td>${r.revenue > 0 ? money(r.revenue) : dash}</td>
+    <td class="${r.roas == null ? "" : r.roas >= 1 ? "good" : "bad"}">${r.roas == null ? dash : r.roas.toFixed(2) + "x"}</td></tr>`).join("")
+    : '<tr><td colspan="8" class="msg">No data in that range.</td></tr>';
+  const T = ROWS.reduce((a, r) => ({ leads: a.leads + r.leads, won: a.won + r.won, revenue: a.revenue + r.revenue, cost: a.cost + r.cost }), { leads: 0, won: 0, revenue: 0, cost: 0 });
+  // ROAS total only over sources that have spend, so free sources (phone, organic) don't inflate it
+  const paid = ROWS.filter((r) => r.cost > 0), pRev = paid.reduce((a, r) => a + r.revenue, 0);
+  const roas = T.cost > 0 ? pRev / T.cost : null;
+  $("tfoot").innerHTML = `<tr><td>Total</td><td>${T.leads}</td><td>${T.won}</td><td>${T.leads ? pct(T.won / T.leads) : dash}</td><td>${T.cost > 0 ? money(T.cost) : dash}</td><td>${T.cost > 0 && T.leads ? "$" + (T.cost / T.leads).toFixed(2) : dash}</td><td>${money(T.revenue)}</td><td>${roas == null ? dash : roas.toFixed(2) + "x"}</td></tr>`;
+  $("cLeads").textContent = T.leads.toLocaleString(); $("cRev").textContent = money(T.revenue);
+  $("cCost").textContent = spendOn ? money(T.cost) : "–"; $("cRoas").textContent = roas == null ? "–" : roas.toFixed(2) + "x";
+  $("note").innerHTML = "Leads, Won and Revenue are for leads that came in during the selected dates (revenue = value of won deals in GHL). " +
+    "Cost is ad spend in the same dates. Cost per lead = cost ÷ leads. ROAS = revenue ÷ cost (4.0x = $4 back per $1 spent). " +
+    "Total ROAS counts only sources with spend. Sources with no ad spend (organic, phone, referrals) show a dash." +
+    (spendOn ? "" : "<br><b>Ad cost isn't connected for this market yet</b>, so Cost, Cost / Lead and ROAS are blank.");
+}
+
+$("apply").onclick = load; $("market").onchange = load;
+load();
+</script>
+</body>
+</html>
