@@ -27,6 +27,9 @@
   td { padding:6px 10px; border:1px solid #e5e7eb; font-size:13px; text-align:center; white-space:nowrap; }
   tbody tr:nth-child(even) td { background:#fff7ed; }
   tfoot td { font-weight:700; background:#f3f4f6 !important; }
+  tr.sub td { background:#f8fafc !important; font-size:12.5px; color:#475569; }
+  tr.sub td.src { padding-left:28px; }
+  tr.par td.src { cursor:pointer; }
   td.src { max-width:360px; overflow:hidden; text-overflow:ellipsis; }
   .good { color:#15803d; font-weight:700; } .bad { color:#b91c1c; font-weight:700; }
   .note { font-size:11px; color:#6b7280; font-style:italic; margin-top:8px; line-height:1.5; }
@@ -70,7 +73,7 @@
    API_BASE = your Cloudflare Worker URL (Ad_Source_Report_Worker.js), no trailing slash.
    A market shows "not connected" until API_BASE is replaced. To add a market: fill its sheet links in the Worker,
    then change its entry here to API_BASE + "/orlando/leads" etc. (slugs: orlando, lasvegas, atlanta). */
-const API_BASE = "https://revenue-by-ad-source.apfelipe94.workers.dev/";
+const API_BASE = "https://revenue-by-ad-source.apfelipe94.workers.dev";
 const MARKETS = [
   { name: "Dallas",    leads: API_BASE + "/dallas/leads", spend: API_BASE + "/dallas/spend" },
   { name: "Orlando",   leads: "PASTE_ORLANDO_LEADS_URL",  spend: "PASTE_ORLANDO_SPEND_URL" },
@@ -153,15 +156,28 @@ function render() {
   RNG = { s, e };
   $("dl").textContent = $("market").value + " · " + s + " → " + e;
   const m = {};
-  const get = (k) => (m[k] = m[k] || { source: k, leads: 0, won: 0, revenue: 0, cost: 0 });
+  const blank = (k) => ({ source: k, leads: 0, won: 0, revenue: 0, cost: 0, camps: {} });
+  const get = (k) => (m[k] = m[k] || blank(k));
+  const camp = (o, c) => (o.camps[c] = o.camps[c] || blank(c));
+  const cname = (r) => String(r.campaign || "").trim() || "(no campaign recorded)";
   LEADS.filter((r) => r.date >= s && r.date <= e).forEach((r) => {
-    const o = get(norm(r.source)); o.leads++; o.won += r.won || 0; o.revenue += r.wonValue || 0;
+    const o = get(norm(r.source)), c = camp(o, cname(r));
+    [o, c].forEach((x) => { x.leads++; x.won += r.won || 0; x.revenue += r.wonValue || 0; });
   });
-  SPEND.filter((r) => r.date >= s && r.date <= e).forEach((r) => { get(norm(r.source)).cost += Number(r.spend) || 0; });
-  ROWS = Object.values(m).map((o) => ({ ...o, close: o.leads ? o.won / o.leads : null, cpl: o.cost > 0 && o.leads ? o.cost / o.leads : null, roas: o.cost > 0 ? o.revenue / o.cost : null }));
+  SPEND.filter((r) => r.date >= s && r.date <= e).forEach((r) => {
+    const o = get(norm(r.source)), v = Number(r.spend) || 0; o.cost += v; camp(o, cname(r)).cost += v;
+  });
+  const calc = (o) => ({ ...o, close: o.leads ? o.won / o.leads : null, cpl: o.cost > 0 && o.leads ? o.cost / o.leads : null, roas: o.cost > 0 ? o.revenue / o.cost : null });
+  ROWS = Object.values(m).map((o) => {
+    const subs = Object.values(o.camps).map(calc);
+    const real = subs.filter((x) => x.source !== "(no campaign recorded)");
+    return { ...calc(o), subs: real.length ? subs : [] };
+  });
   draw();
 }
 
+const OPEN = {};
+document.addEventListener("click", (ev) => { const tr = ev.target.closest("tr.par"); if (!tr) return; const k = tr.dataset.s; OPEN[k] = !OPEN[k]; draw(); });
 const COLS = [["source", "Ad Source"], ["leads", "Leads"], ["won", "Won"], ["close", "Close Rate"], ["cost", "Cost"], ["cpl", "Cost / Lead"], ["revenue", "Revenue"], ["roas", "ROAS"]];
 function draw() {
   $("thead").innerHTML = COLS.map(([k, l]) => `<th data-k="${k}">${l}${k === sortKey ? (sortDir < 0 ? " ▼" : " ▲") : ""}</th>`).join("");
@@ -172,12 +188,18 @@ function draw() {
     return sortDir * ((x == null ? -1 : x) - (y == null ? -1 : y)) || b.revenue - a.revenue;
   });
   const dash = "—";
-  $("tbody").innerHTML = rows.length ? rows.map((r) => `<tr>
-    <td class="src" title="${esc(r.source)}">${esc(r.source)}</td>
-    <td>${r.leads || dash}</td><td>${r.won || dash}</td><td>${r.close == null ? dash : pct(r.close)}</td>
+  const cells = (r) => `<td>${r.leads || dash}</td><td>${r.won || dash}</td><td>${r.close == null ? dash : pct(r.close)}</td>
     <td>${r.cost > 0 ? money(r.cost) : dash}</td><td>${r.cpl == null ? dash : "$" + r.cpl.toFixed(2)}</td>
     <td>${r.revenue > 0 ? money(r.revenue) : dash}</td>
-    <td class="${r.roas == null ? "" : r.roas >= 1 ? "good" : "bad"}">${r.roas == null ? dash : r.roas.toFixed(2) + "x"}</td></tr>`).join("")
+    <td class="${r.roas == null ? "" : r.roas >= 1 ? "good" : "bad"}">${r.roas == null ? dash : r.roas.toFixed(2) + "x"}</td>`;
+  const subSort = (a, b) => (a.source === "(no campaign recorded)") - (b.source === "(no campaign recorded)") || b.revenue - a.revenue || b.cost - a.cost || b.leads - a.leads;
+  $("tbody").innerHTML = rows.length ? rows.map((r) => {
+    const has = r.subs && r.subs.length, open = OPEN[r.source];
+    let html = `<tr class="${has ? "par" : ""}" data-s="${esc(r.source)}">
+    <td class="src" title="${esc(r.source)}">${has ? (open ? "▾ " : "▸ ") : ""}${esc(r.source)}${has ? ` <span style="color:#94a3b8;font-size:12px">(${r.subs.length} campaigns)</span>` : ""}</td>${cells(r)}</tr>`;
+    if (has && open) html += r.subs.filter((x) => x.leads || x.cost).sort(subSort).map((x) => `<tr class="sub"><td class="src" title="${esc(x.source)}">${esc(x.source)}</td>${cells(x)}</tr>`).join("");
+    return html;
+  }).join("")
     : '<tr><td colspan="8" class="msg">No data in that range.</td></tr>';
   const T = ROWS.reduce((a, r) => ({ leads: a.leads + r.leads, won: a.won + r.won, revenue: a.revenue + r.revenue, cost: a.cost + r.cost }), { leads: 0, won: 0, revenue: 0, cost: 0 });
   // ROAS total only over sources that have spend, so free sources (phone, organic) don't inflate it
@@ -187,6 +209,7 @@ function draw() {
   $("cLeads").textContent = T.leads.toLocaleString(); $("cRev").textContent = money(T.revenue);
   $("cCost").textContent = spendOn ? money(T.cost) : "–"; $("cRoas").textContent = roas == null ? "–" : roas.toFixed(2) + "x";
   $("note").innerHTML = "Leads, Won and Revenue are for leads that came in during the selected dates (revenue = value of won deals in GHL). " +
+    "Click Google Ads or Meta / Facebook to see each campaign. Leads with no campaign on record (mostly older leads) sit under \"(no campaign recorded)\". " +
     "Cost is ad spend in the same dates. Cost per lead = cost ÷ leads. ROAS = revenue ÷ cost (4.0x = $4 back per $1 spent). " +
     "Total Cost / Lead and ROAS count only sources with spend. Sources with no ad spend (organic, phone, referrals) show a dash." +
     (spendOn && SPEND.length && RNG.s < SPEND.reduce((m, x) => (x.date < m ? x.date : m), SPEND[0].date)
