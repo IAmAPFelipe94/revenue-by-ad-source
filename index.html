@@ -76,9 +76,9 @@
 const API_BASE = "https://revenue-by-ad-source.apfelipe94.workers.dev";
 const MARKETS = [
   { name: "Dallas",    leads: API_BASE + "/dallas/leads", spend: API_BASE + "/dallas/spend" },
-  { name: "Orlando",   leads: "PASTE_ORLANDO_LEADS_URL",  spend: "PASTE_ORLANDO_SPEND_URL" },
-  { name: "Las Vegas", leads: "PASTE_LASVEGAS_LEADS_URL", spend: "PASTE_LASVEGAS_SPEND_URL" },
-  { name: "Atlanta",   leads: "PASTE_ATLANTA_LEADS_URL",  spend: "PASTE_ATLANTA_SPEND_URL" }
+  { name: "Orlando",   leads: API_BASE + "/orlando/leads", spend: API_BASE + "/orlando/spend" },
+  { name: "Las Vegas", leads: API_BASE + "/lasvegas/leads", spend: API_BASE + "/lasvegas/spend" },
+  { name: "Atlanta",   leads: API_BASE + "/atlanta/leads", spend: API_BASE + "/atlanta/spend" }
 ];
 const getJson = (u) => fetch(u).then((r) => r.json().then((j) => { if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status); return j; }));
 
